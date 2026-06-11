@@ -1,0 +1,18 @@
+Port scan seluruh subnet:
+pake /
+python netscan.py --portscan 192.168.1.0/24
+
+Port scan satu IP:
+python netscan.py --portscan 192.168.1.10
+
+LAN (ARP) scan:
+python netscan.py --lanscan
+
+Intrusion Detection (sederhana — pantau ARP tiap interval 10 detik):
+python netscan.py --ids
+
+ untuk cek seluruh jaringan aktif/digunakan
+ python netscan.py 10.66.176.1/20
+
+ untuk cek jaringan aktif
+python netscan.py 10.66.176.1
