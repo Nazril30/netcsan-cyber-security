@@ -14,8 +14,8 @@ def print_app_name():
 ██  █ █       █   █     █     █   █ ██  █ 
 █ █ █ ████    █    ███  █     █████ █ █ █ 
 █  ██ █       █       █ █     █   █ █  ██ 
-█   █ █████   █   ████   ███  █   █ █   █ 
-                                                                                                                                                    
+█   █ █████   █   ████   ███  █   █ █   █
+
 -- Pemindai Jaringan Lokal Berbasis Python --
     """)
 
@@ -95,7 +95,7 @@ def ping_host(ip):
     ip_str = str(ip)
     
     if "windows" in os_type:
-        cmd = ["ping", "-n", "1", "-w", "400", ip_str]
+        cmd = ["ping", "-n", "1", "-w", "500", ip_str]
     else:
         cmd = ["ping", "-c", "1", "-W", "1", ip_str]
         
@@ -106,15 +106,13 @@ def ping_host(ip):
     return None
 
 def scan_network(network):
-    print(f"[*] Melakukan Ping Sweep pada jaringan: {network}")
-    print("[*] Mengidentifikasi host yang aktif, mohon tunggu...\n")
+    print(f"[*] Memulai pemindaian pada jaringan: {network}")
+    print("[*] Mohon tunggu beberapa detik...\n")
     
     online_machines = []
     hosts = list(network.hosts())
-    if not hosts and network.num_addresses == 1:
-        hosts = [network.network_address]
     
-    with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
         results = executor.map(ping_host, hosts)
         for res in results:
             if res:
@@ -122,83 +120,50 @@ def scan_network(network):
                 
     return online_machines
 
-
-def grab_banner(ip, port):
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(2)
-            if s.connect_ex((ip, port)) != 0:
-                return ""
-            if port in [80, 8080]:
-                s.sendall(b"HEAD / HTTP/1.0\r\n\r\n")
-            banner = s.recv(1024)
-            return banner.decode(errors="ignore").strip()
-    except Exception:
-        return ""
-
-
-def check_tcp_port(ip, port, timeout):
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(timeout)
-            return s.connect_ex((str(ip), port)) == 0
-    except OSError:
-        return False
-
-
-def check_udp_port(ip, port, timeout):
-    if port != 53:
-        return False
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.settimeout(timeout)
-            # Query DNS sederhana untuk memeriksa respons UDP port 53
-            query = (
-                b"\xaa\xaa"      # ID
-                b"\x01\x00"      # flags: standard query
-                b"\x00\x01"      # QDCOUNT
-                b"\x00\x00"      # ANCOUNT
-                b"\x00\x00"      # NSCOUNT
-                b"\x00\x00"      # ARCOUNT
-                b"\x03www\x06google\x03com\x00"
-                b"\x00\x01"      # QTYPE A
-                b"\x00\x01"      # QCLASS IN
-            )
-            s.sendto(query, (str(ip), port))
-            s.recvfrom(512)
-            return True
-    except (socket.timeout, OSError):
-        return False
-
-
-def port_scan_host(ip, ports=None, timeout=1.0):
+def port_scan_host(ip, ports=None, timeout=0.5):
     if ports is None:
-        # Daftar port standar esensial audit keamanan
         ports = [21, 22, 23, 25, 53, 80, 110, 139, 143, 443, 445, 3389, 8080]
     open_ports = []
 
     def _scan(port):
         try:
-            if check_tcp_port(ip, port, timeout):
-                return port
-            if check_udp_port(ip, port, timeout):
-                return port
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(timeout)
+                if s.connect_ex((ip, port)) == 0:
+                    s.settimeout(1.0)
+                    banner = ""
+                    bytes_count = 0
+                    try:
+                        if port in [80, 8080, 443]:
+                            s.sendall(b"HEAD / HTTP/1.0\r\n\r\n")
+                        
+                        banner_bytes = s.recv(512)
+                        bytes_count = len(banner_bytes)
+                        banner = banner_bytes.decode(errors="ignore").strip()
+                    except Exception:
+                        pass
+                    
+                    return {
+                        "port": port,
+                        "banner": banner,
+                        "bytes": bytes_count
+                    }
         except Exception:
             return None
         return None
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
         results = executor.map(_scan, ports)
         for r in results:
             if r:
                 open_ports.append(r)
 
-    return sorted(open_ports)
+    return sorted(open_ports, key=lambda x: x["port"])
 
 def port_scan_network(hosts, ports=None):
-    print(f"\n[*] Melakukan Port Scan simultan pada {len(hosts)} host aktif...")
+    print(f"[*] Menjalankan port scan pada {len(hosts)} host...")
     results = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
         future_to_host = {executor.submit(port_scan_host, h, ports): h for h in hosts}
         for fut in concurrent.futures.as_completed(future_to_host):
             h = future_to_host[fut]
@@ -208,6 +173,41 @@ def port_scan_network(hosts, ports=None):
                 openp = []
             results[h] = openp
     return results
+
+PORT_SERVICES = {
+    21: "ftp",
+    22: "ssh",
+    23: "telnet",
+    25: "smtp",
+    53: "dns",
+    80: "http",
+    110: "pop3",
+    139: "netbios-ssn",
+    143: "imap",
+    443: "https",
+    445: "microsoft-ds",
+    3389: "rdp",
+    8080: "http-alt",
+}
+
+def verify_metasploitable(port, banner):
+    if not banner:
+        return ""
+    b_lower = banner.lower()
+    
+    if "vsftpd 2.3.4" in b_lower:
+        return " -> Terverifikasi: vsFTPd 2.3.4 (Metasploitable Backdoor Vulnerable!)"
+    elif "openssh 4.7p1" in b_lower:
+        return " -> Terverifikasi: OpenSSH 4.7p1 (Metasploitable Linux Target)"
+    elif "apache/2.2.8" in b_lower:
+        return " -> Terverifikasi: Apache HTTPD 2.2.8 (Metasploitable Web)"
+    elif "samba" in b_lower or "3.0.20" in b_lower:
+        return " -> Terverifikasi: Samba 3.x (Metasploitable Device)"
+    elif "unrealircd" in b_lower or "unreal32" in b_lower:
+        return " -> Terverifikasi: UnrealIRCd (Metasploitable IRC Backdoor)"
+    
+    clean_b = banner.replace('\r', '').replace('\n', ' ')
+    return f" -> Banner asli: {clean_b[:35]}"
 
 def lan_scan():
     try:
@@ -223,13 +223,13 @@ def lan_scan():
         mac_match = re.search(r"([0-9A-Fa-f]{2}[:-](?:[0-9A-Fa-f]{2}[:-]){4}[0-9A-Fa-f]{2})", line)
         if ip_match and mac_match:
             ip = ip_match.group(1)
-            mac = mac_match.group(1).lower().replace("-", ":")
+            mac = mac_match.group(1).lower().replace(':', '-')
             entries[ip] = mac
     return entries
 
-def intrusion_detection(interval=5):
-    print("[*] Memulai Intrusion Detection (IDS) berbasis pemantauan ARP")
-    print("[*] Mendeteksi anomali & ARP Spoofing... (Tekan Ctrl+C untuk berhenti)\n")
+def intrusion_detection(network, interval=10):
+    print("[*] Memulai Intrusion Detection (tekan Ctrl+C untuk berhenti)")
+    print("[*] Mengawasi ARP Spoofing & Anomali Banner Size (> 32 Bytes)...\n")
     prev = {}
     try:
         while True:
@@ -237,46 +237,64 @@ def intrusion_detection(interval=5):
             new_hosts = set(arp.keys()) - set(prev.keys())
             gone_hosts = set(prev.keys()) - set(arp.keys())
             
+            # Filter alamat IP broadcast / multicast agar tidak masuk deteksi
+            for ip in list(new_hosts):
+                if ip.endswith('.255') or ip.startswith('224.') or ip.startswith('239.') or ip == '255.255.255.255':
+                    new_hosts.remove(ip)
+
             for ip in new_hosts:
-                if prev: # Jangan munculkan alert pada scanning iterasi pertama
-                    print(f"[ALERT] Host baru masuk jaringan: {ip} -> [{arp[ip]}]")
+                print(f"[ALERT] Host baru terdeteksi di LAN: {ip} -> {arp[ip]}")
             for ip in gone_hosts:
-                print(f"[INFO] Host terputus/hilang: {ip} (sebelumnya {prev.get(ip)})")
+                if not (ip.endswith('.255') or ip.startswith('224.') or ip == '255.255.255.255'):
+                    print(f"[INFO] Host terputus: {ip}")
 
-            for ip, mac in arp.items():
-                if ip in prev and prev[ip] != mac:
-                    print(f"[CRITICAL WARNING] Dugaan ARP Spoofing! MAC berubah untuk IP {ip}: {prev[ip]} -> {mac}")
-
-            # Deteksi MAC duplikat (kemungkinan spoofing)
             mac_to_ips = {}
             for ip, mac in arp.items():
-                mac_to_ips.setdefault(mac, []).append(ip)
-            for mac, ips in mac_to_ips.items():
-                # REVISI: Abaikan alamat MAC broadcast universal agar tidak false alarm
-                if mac == "ff:ff:ff:ff:ff:ff":
+                # Filter agar IP broadcast tidak mengotori pemetaan MAC
+                if ip.endswith('.255') or ip.startswith('224.') or ip == '255.255.255.255':
                     continue
-                    
+                mac_to_ips.setdefault(mac, []).append(ip)
+
+            # --- PERBAIKAN: Saring MAC Broadcast & Multicast Bawaan OS ---
+            for mac, ips in mac_to_ips.items():
+                if mac in ["ff-ff-ff-ff-ff-ff", "01-00-5e-00-00-02", "01-00-5e-00-00-16", "01-00-5e-00-00-fb", "01-00-5e-00-00-fc", "01-00-5e-7f-ff-fa"]:
+                    continue
                 if len(ips) > 1:
-                    print(f"[CRITICAL] Indikasi MITM Attack! MAC [{mac}] duplikat di beberapa IP: {', '.join(ips)}")
+                    print(f"[CRITICAL] Serangan MITM Aktif! MAC {mac} dipakai massal oleh: {', '.join(ips)}")
+
+            print("[IDS-CHECK] Memindai panjang data respon banner dari perangkat fisik aktif...")
+            active_hosts = [ip for ip in arp.keys() if not (ip.endswith('.255') or ip.startswith('224.') or ip == '255.255.255.255')]
+            
+            for host in active_hosts:
+                try:
+                    open_entries = port_scan_host(host)
+                    for entry in open_entries:
+                        if entry["bytes"] > 32:
+                            # Tampilkan info detail bahwa ini kemungkinan service web biasa jika portnya 80/8080
+                            notes = " (HTTP Header/Banner Biasa)" if entry["port"] in [80, 8080, 443] else ""
+                            print(f"  [IDS ALERT] Potensi Eksploitasi/Anomali payload pada {host}:{entry['port']} -> Terbaca {entry['bytes']} Bytes (>32!){notes}")
+                except Exception:
+                    pass
 
             prev = arp
+            print(f"[IDS] Tidur selama {interval} detik sebelum siklus pengawasan berikutnya...\n")
             time.sleep(interval)
     except KeyboardInterrupt:
-        print("\n[*] Intrusion Detection System dihentikan oleh pengguna.")
+        print("\n[*] Intrusion Detection dihentikan oleh pengguna.")
 
 def show_help():
     print("""
 Penggunaan: python net_scan.py [OPSI/JARINGAN]
 
 Opsi:
-  -h, --help        Menampilkan menu bantuan ini
-  --lanscan         Tampilkan tabel ARP lokal saat ini (IP -> MAC)
-  --ids             Jalankan simple IDS untuk memantau mitigasi serangan ARP Spoofing
+  -h, --help    Menampilkan menu bantuan ini
+    -p, --portscan <IP|NETWORK>   Pindai port pada IP tunggal atau seluruh subnet
+    --lanscan     Tampilkan tabel ARP lokal (IP -> MAC)
+    --ids         Jalankan simple IDS yang memantau perubahan ARP & Byte Anomali
 
 Contoh Perintah:
-  python net_scan.py                 <- Otomatis lacak IP + cek port pada subnet aktif
-  python net_scan.py 192.168.1.0/24  <- Pindai IP + cek port subnet manual
-  python net_scan.py ip 192.168.18.1  <- Pindai host tunggal secara langsung
+  python net_scan.py                 <- Deteksi otomatis & pindai jaringan saat ini
+  python net_scan.py 192.168.1.0/24  <- Memindai blok subnet tertentu secara manual
     """)
 
 def main():
@@ -289,59 +307,71 @@ def main():
         
     if len(args) >= 1 and args[0] == "--lanscan":
         entries = lan_scan()
-        print("=" * 55)
+        print("=" * 60)
         print(f" TABEL LAN ARP ENTRIES (TOTAL PERANGKAT: {len(entries)})")
-        print("=" * 55)
+        print("=" * 60)
         for ip, mac in entries.items():
             print(f" [DEVICE] IP Target: {ip.ljust(15)} ---> MAC Address: {mac}")
-        print("=" * 55)
+        print("=" * 60)
         sys.exit(0)
 
     if len(args) >= 1 and args[0] == "--ids":
-        intrusion_detection()
+        if len(args) == 2:
+            target_network = parse_network(args[1])
+        else:
+            target_network = parse_network()
+        intrusion_detection(target_network)
         sys.exit(0)
 
-    # ALUR UTAMA (Penyatuan Otomatis: Subnet -> Ping Sweep -> Port Scan)
-    if len(args) >= 2 and args[0].lower() == "ip":
-        target_network = parse_network(args[1])
-    elif len(args) == 1:
+    if len(args) == 1:
         target_network = parse_network(args[0])
     else:
         target_network = parse_network()
         
-    # 1. Jalankan Network Scan (Ping Sweep)
     active_hosts = scan_network(target_network)
-    
-    # 2. Jalankan Port Scan langsung pada host yang berstatus Online
-    port_results = {}
-    if active_hosts:
-        port_results = port_scan_network(active_hosts)
-    
-    # 3. Tampilkan Gabungan Output Akhir yang Komprehensif
+    port_results = port_scan_network(active_hosts)
+
     print("\n" + "=" * 65)
-    print(f" HASIL KOMBINASI PEMINDAIAN: {len(active_hosts)} PERANGKAT AKTIF")
-    print("=" * 65)
-    
-    if not active_hosts:
-        print(" [!] Tidak ada host aktif yang ditemukan pada rentang subnet ini.")
-    else:
-        for host in active_hosts:
-            open_ports = port_results.get(host, [])
-            print(f"\n[ONLINE] {host}")
+    print(f"Scan pada jaringan: {target_network}")
+    print(f"Perangkat aktif: {len(active_hosts)}\n")
 
-            if not open_ports:
-                print("   Tidak ada port terbuka")
-                continue
+    output_file = "Port scan seluruh subnet.txt"
+    try:
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(f"Scan pada jaringan: {target_network}\n")
+            f.write(f"Perangkat aktif: {len(active_hosts)}\n\n")
+            
+            for i, h in enumerate(active_hosts):
+                ports = port_results.get(h, [])
+                
+                print(f"[ONLINE] {h}")
+                f.write(f"[ONLINE] {h}\n")
 
-            for port in open_ports:
-                try:
-                    service = socket.getservbyport(port)
-                except Exception:
-                    service = "unknown"
-
-                print(f"   {port}/tcp  ({service})")
-
-    print("=" * 65)
+                if ports:
+                    for entry in ports:
+                        port = entry["port"]
+                        banner = entry["banner"]
+                        bytes_len = entry["bytes"]
+                        
+                        expected_service = PORT_SERVICES.get(port, "unknown")
+                        meta_info = verify_metasploitable(port, banner)
+                        warning_flag = " [WARNING: bytes > 32]" if bytes_len > 32 else ""
+                        
+                        pstr = f"{port}/tcp ({expected_service}){meta_info}{warning_flag}"
+                        print(f"    {pstr}")
+                        f.write(f"    {pstr}\n")
+                else:
+                    print("    []")
+                    f.write("    []\n")
+                
+                if i < len(active_hosts) - 1:
+                    print()
+                    f.write("\n")
+                    
+        print("=" * 65)
+        print(f"[*] Hasil lengkap sukses dicatat ke: {output_file}")
+    except Exception as e:
+        print(f"[-] Gagal menulis hasil ke {output_file}: {e}")
 
 if __name__ == "__main__":
     main()

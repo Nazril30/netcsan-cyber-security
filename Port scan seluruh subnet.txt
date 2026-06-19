@@ -1,12 +1,9 @@
-1. Perintah Utama (Kombinasi Auto Subnet + Ping Sweep + Port Scan)
-Mode Otomatis (Rekomendasi):
-python netscan.py
+Scan pada jaringan: 192.168.0.0/24
+Perangkat aktif: 2
 
-Mode Manual (Jika ingin menguji subnet spesifik):
-python netscan.py 192.168.1.0/24
+[ONLINE] 192.168.0.100
+    []
 
-2. Perintah Pemetaan MAC Address (LAN Scan):
-python netscan.py --lanscan
-
-3. Perintah Sistem Deteksi Intrusi (IDS):
-python netscan.py --ids
+[ONLINE] 192.168.0.102
+    139/tcp (netbios-ssn)
+    445/tcp (microsoft-ds)
